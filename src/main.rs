@@ -6,22 +6,21 @@ extern crate winapi;
 #[cfg(windows)]
 use winapi::um::{
     winuser::*,
-    wingdi::*,
     winbase::*,
     namedpipeapi::*,
     handleapi::*,
-    synchapi::*,
     processthreadsapi::*,
     libloaderapi::*,
     errhandlingapi::*,
     fileapi::*,
-    winnt::*,
+    winnt::HANDLE,
 };
 #[cfg(windows)]
 use winapi::shared::{
     minwindef::*,
-    windef::*,
-    ntdef::*,
+    windef::HWND,
+    ntdef::NULL,
+    winerror::ERROR_PIPE_CONNECTED,
 };
 #[cfg(windows)]
 use std::ffi::OsStr;
@@ -44,11 +43,16 @@ const PIPE_NAME: &str = r"\\.\pipe\NSQCuE_Overlay_Pipe";
 const WM_USER_ADD_MESSAGE: u32 = WM_USER + 1;
 
 #[cfg(windows)]
-static MESSAGES_LIST: Mutex<Option<HWND>> = Mutex::new(None);
+struct UnsafeSend<T>(T);
 #[cfg(windows)]
-static INPUT_FIELD: Mutex<Option<HWND>> = Mutex::new(None);
+unsafe impl<T> Send for UnsafeSend<T> {}
+
 #[cfg(windows)]
-static PIPE_HANDLE: Mutex<Option<HANDLE>> = Mutex::new(None);
+static MESSAGES_LIST: Mutex<Option<UnsafeSend<HWND>>> = Mutex::new(None);
+#[cfg(windows)]
+static INPUT_FIELD: Mutex<Option<UnsafeSend<HWND>>> = Mutex::new(None);
+#[cfg(windows)]
+static PIPE_HANDLE: Mutex<Option<UnsafeSend<HANDLE>>> = Mutex::new(None);
 
 #[cfg(windows)]
 #[derive(Debug, Serialize, Deserialize)]
@@ -137,15 +141,9 @@ fn create_controls(parent: HWND) {
     unsafe {
         let hinstance = GetModuleHandleW(null_mut());
         
-        // ListBox
-        let list_class: Vec<u16> = OsStr::new("LISTBOX")
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        
         let list_hwnd = CreateWindowExW(
             WS_EX_CLIENTEDGE,
-            list_class.as_ptr(),
+            "LISTBOX\0".as_ptr() as *const u16,
             null_mut(),
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
             10, 10, 380, 380,
@@ -155,17 +153,11 @@ fn create_controls(parent: HWND) {
             null_mut(),
         );
         
-        *MESSAGES_LIST.lock().unwrap() = Some(list_hwnd);
-        
-        // Edit
-        let edit_class: Vec<u16> = OsStr::new("EDIT")
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
+        *MESSAGES_LIST.lock().unwrap() = Some(UnsafeSend(list_hwnd));
         
         let input_hwnd = CreateWindowExW(
             WS_EX_CLIENTEDGE,
-            edit_class.as_ptr(),
+            "EDIT\0".as_ptr() as *const u16,
             null_mut(),
             WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
             10, 400, 300, 25,
@@ -175,23 +167,12 @@ fn create_controls(parent: HWND) {
             null_mut(),
         );
         
-        *INPUT_FIELD.lock().unwrap() = Some(input_hwnd);
-        
-        // Button
-        let button_class: Vec<u16> = OsStr::new("BUTTON")
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        
-        let button_text: Vec<u16> = OsStr::new("Send")
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
+        *INPUT_FIELD.lock().unwrap() = Some(UnsafeSend(input_hwnd));
         
         CreateWindowExW(
             0,
-            button_class.as_ptr(),
-            button_text.as_ptr(),
+            "BUTTON\0".as_ptr() as *const u16,
+            "Send\0".as_ptr() as *const u16,
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             320, 400, 70, 25,
             parent,
@@ -210,9 +191,7 @@ unsafe extern "system" fn wndproc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        WM_CREATE => {
-            0
-        }
+        WM_CREATE => 0,
         
         WM_NCHITTEST => {
             let result = DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -234,10 +213,11 @@ unsafe extern "system" fn wndproc(
         
         WM_KEYDOWN => {
             if wparam as i32 == 13 {
-                let input_hwnd = INPUT_FIELD.lock().unwrap().unwrap();
-                if GetFocus() == input_hwnd {
-                    send_input_to_pipe();
-                    return 0;
+                if let Some(UnsafeSend(input_hwnd)) = *INPUT_FIELD.lock().unwrap() {
+                    if GetFocus() == input_hwnd {
+                        send_input_to_pipe();
+                        return 0;
+                    }
                 }
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -264,17 +244,18 @@ unsafe extern "system" fn wndproc(
 #[cfg(windows)]
 fn send_input_to_pipe() {
     unsafe {
-        let input_hwnd = INPUT_FIELD.lock().unwrap().unwrap();
-        let mut buffer = vec![0u16; 1024];
-        let len = GetWindowTextW(input_hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
-        
-        if len > 0 {
-            let text = String::from_utf16_lossy(&buffer[..len as usize]);
-            SetWindowTextW(input_hwnd, null_mut());
+        if let Some(UnsafeSend(input_hwnd)) = *INPUT_FIELD.lock().unwrap() {
+            let mut buffer = vec![0u16; 1024];
+            let len = GetWindowTextW(input_hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
             
-            let msg = PipeMessage::Input { text };
-            if let Ok(json) = serde_json::to_string(&msg) {
-                send_to_pipe(&json);
+            if len > 0 {
+                let text = String::from_utf16_lossy(&buffer[..len as usize]);
+                SetWindowTextW(input_hwnd, null_mut());
+                
+                let msg = PipeMessage::Input { text };
+                if let Ok(json) = serde_json::to_string(&msg) {
+                    send_to_pipe(&json);
+                }
             }
         }
     }
@@ -283,7 +264,7 @@ fn send_input_to_pipe() {
 #[cfg(windows)]
 fn add_message_to_list(text: &str) {
     unsafe {
-        if let Some(list_hwnd) = *MESSAGES_LIST.lock().unwrap() {
+        if let Some(UnsafeSend(list_hwnd)) = *MESSAGES_LIST.lock().unwrap() {
             let wide_text: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
             SendMessageW(list_hwnd, LB_ADDSTRING, 0, wide_text.as_ptr() as LPARAM);
             
@@ -318,7 +299,7 @@ fn pipe_server_thread() {
                 continue;
             }
             
-            *PIPE_HANDLE.lock().unwrap() = Some(pipe_handle);
+            *PIPE_HANDLE.lock().unwrap() = Some(UnsafeSend(pipe_handle));
             
             let connected = ConnectNamedPipe(pipe_handle, null_mut()) != 0;
             if !connected && GetLastError() != ERROR_PIPE_CONNECTED {
@@ -367,7 +348,7 @@ fn pipe_server_thread() {
 #[cfg(windows)]
 fn send_to_pipe(data: &str) {
     unsafe {
-        if let Some(pipe) = *PIPE_HANDLE.lock().unwrap() {
+        if let Some(UnsafeSend(pipe)) = *PIPE_HANDLE.lock().unwrap() {
             let bytes = data.as_bytes();
             let mut bytes_written = 0u32;
             
