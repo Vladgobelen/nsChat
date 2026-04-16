@@ -18,15 +18,21 @@ use winapi::um::{
     winnt::*,
 };
 #[cfg(windows)]
+use winapi::shared::{
+    minwindef::*,
+    windef::*,
+    ntdef::*,
+};
+#[cfg(windows)]
 use std::ffi::OsStr;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
-use std::io::Write;
-#[cfg(windows)]
 use std::sync::Mutex;
 #[cfg(windows)]
 use std::thread;
+#[cfg(windows)]
+use std::ptr::null_mut;
 #[cfg(windows)]
 use serde::{Deserialize, Serialize};
 
@@ -74,7 +80,7 @@ fn main() {
 #[cfg(windows)]
 fn create_window() {
     unsafe {
-        let hinstance = GetModuleHandleW(std::ptr::null());
+        let hinstance = GetModuleHandleW(null_mut());
         
         let class_name: Vec<u16> = OsStr::new(WINDOW_CLASS_NAME)
             .encode_wide()
@@ -87,10 +93,10 @@ fn create_window() {
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: hinstance,
-            hIcon: std::ptr::null_mut(),
-            hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
+            hIcon: null_mut(),
+            hCursor: LoadCursorW(null_mut(), IDC_ARROW),
             hbrBackground: (COLOR_WINDOW + 1) as HBRUSH,
-            lpszMenuName: std::ptr::null(),
+            lpszMenuName: null_mut(),
             lpszClassName: class_name.as_ptr(),
         };
         
@@ -107,10 +113,10 @@ fn create_window() {
             title.as_ptr(),
             WS_POPUP | WS_VISIBLE | WS_THICKFRAME,
             100, 100, 400, 500,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
+            null_mut(),
+            null_mut(),
             hinstance,
-            std::ptr::null_mut(),
+            null_mut(),
         );
         
         SetLayeredWindowAttributes(hwnd, 0, 240, LWA_ALPHA);
@@ -118,8 +124,8 @@ fn create_window() {
         ShowWindow(hwnd, SW_SHOW);
         UpdateWindow(hwnd);
         
-        let mut msg = MSG::default();
-        while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+        let mut msg: MSG = std::mem::zeroed();
+        while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -129,7 +135,7 @@ fn create_window() {
 #[cfg(windows)]
 fn create_controls(parent: HWND) {
     unsafe {
-        let hinstance = GetModuleHandleW(std::ptr::null());
+        let hinstance = GetModuleHandleW(null_mut());
         
         // ListBox
         let list_class: Vec<u16> = OsStr::new("LISTBOX")
@@ -140,13 +146,13 @@ fn create_controls(parent: HWND) {
         let list_hwnd = CreateWindowExW(
             WS_EX_CLIENTEDGE,
             list_class.as_ptr(),
-            std::ptr::null(),
+            null_mut(),
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
             10, 10, 380, 380,
             parent,
-            std::ptr::null_mut(),
+            null_mut(),
             hinstance,
-            std::ptr::null_mut(),
+            null_mut(),
         );
         
         *MESSAGES_LIST.lock().unwrap() = Some(list_hwnd);
@@ -160,13 +166,13 @@ fn create_controls(parent: HWND) {
         let input_hwnd = CreateWindowExW(
             WS_EX_CLIENTEDGE,
             edit_class.as_ptr(),
-            std::ptr::null(),
+            null_mut(),
             WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
             10, 400, 300, 25,
             parent,
-            std::ptr::null_mut(),
+            null_mut(),
             hinstance,
-            std::ptr::null_mut(),
+            null_mut(),
         );
         
         *INPUT_FIELD.lock().unwrap() = Some(input_hwnd);
@@ -191,7 +197,7 @@ fn create_controls(parent: HWND) {
             parent,
             1 as HMENU,
             hinstance,
-            std::ptr::null_mut(),
+            null_mut(),
         );
     }
 }
@@ -205,7 +211,7 @@ unsafe extern "system" fn wndproc(
 ) -> LRESULT {
     match msg {
         WM_CREATE => {
-            LRESULT(0)
+            0
         }
         
         WM_NCHITTEST => {
@@ -223,15 +229,15 @@ unsafe extern "system" fn wndproc(
             if id == 1 && code == BN_CLICKED {
                 send_input_to_pipe();
             }
-            LRESULT(0)
+            0
         }
         
         WM_KEYDOWN => {
-            if wparam == 13 {
+            if wparam as i32 == 13 {
                 let input_hwnd = INPUT_FIELD.lock().unwrap().unwrap();
                 if GetFocus() == input_hwnd {
                     send_input_to_pipe();
-                    return LRESULT(0);
+                    return 0;
                 }
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -243,12 +249,12 @@ unsafe extern "system" fn wndproc(
                 wparam as usize,
             ));
             add_message_to_list(&text);
-            LRESULT(0)
+            0
         }
         
         WM_DESTROY => {
             PostQuitMessage(0);
-            LRESULT(0)
+            0
         }
         
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
@@ -264,7 +270,7 @@ fn send_input_to_pipe() {
         
         if len > 0 {
             let text = String::from_utf16_lossy(&buffer[..len as usize]);
-            SetWindowTextW(input_hwnd, std::ptr::null());
+            SetWindowTextW(input_hwnd, null_mut());
             
             let msg = PipeMessage::Input { text };
             if let Ok(json) = serde_json::to_string(&msg) {
@@ -282,7 +288,7 @@ fn add_message_to_list(text: &str) {
             SendMessageW(list_hwnd, LB_ADDSTRING, 0, wide_text.as_ptr() as LPARAM);
             
             let count = SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0);
-            SendMessageW(list_hwnd, LB_SETTOPINDEX, count - 1, 0);
+            SendMessageW(list_hwnd, LB_SETTOPINDEX, (count - 1) as WPARAM, 0);
         }
     }
 }
@@ -304,7 +310,7 @@ fn pipe_server_thread() {
                 4096,
                 4096,
                 0,
-                std::ptr::null_mut(),
+                null_mut(),
             );
             
             if pipe_handle == INVALID_HANDLE_VALUE {
@@ -314,7 +320,7 @@ fn pipe_server_thread() {
             
             *PIPE_HANDLE.lock().unwrap() = Some(pipe_handle);
             
-            let connected = ConnectNamedPipe(pipe_handle, std::ptr::null_mut()) != 0;
+            let connected = ConnectNamedPipe(pipe_handle, null_mut()) != 0;
             if !connected && GetLastError() != ERROR_PIPE_CONNECTED {
                 CloseHandle(pipe_handle);
                 continue;
@@ -329,7 +335,7 @@ fn pipe_server_thread() {
                     buffer.as_mut_ptr() as *mut _,
                     buffer.len() as u32,
                     &mut bytes_read,
-                    std::ptr::null_mut(),
+                    null_mut(),
                 );
                 
                 if result != 0 && bytes_read > 0 {
@@ -370,7 +376,7 @@ fn send_to_pipe(data: &str) {
                 bytes.as_ptr() as *const _,
                 bytes.len() as u32,
                 &mut bytes_written,
-                std::ptr::null_mut(),
+                null_mut(),
             );
             
             FlushFileBuffers(pipe);
@@ -386,8 +392,8 @@ fn find_overlay_window() -> Option<HWND> {
             .chain(std::iter::once(0))
             .collect();
         
-        let hwnd = FindWindowW(class_name.as_ptr(), std::ptr::null());
-        if hwnd != std::ptr::null_mut() {
+        let hwnd = FindWindowW(class_name.as_ptr(), null_mut());
+        if hwnd != null_mut() {
             Some(hwnd)
         } else {
             None
