@@ -1,0 +1,27 @@
+# Запретить всё
+*
+
+# Разрешить директории (чтобы можно было зайти внутрь)
+!*/
+
+# Git
+!.gitignore
+!.gitattributes
+
+# GitHub Actions
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
+!.github/workflows/*.yaml
+
+# Rust проект
+!Cargo.toml
+!Cargo.lock
+
+# Исходный код
+!src/
+!src/**/*.rs
+
+# Документация (опционально)
+!README.md
+!LICENSE
