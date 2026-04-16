@@ -9,17 +9,16 @@ use winapi::um::{
     winbase::*,
     namedpipeapi::*,
     handleapi::*,
-    processthreadsapi::*,
     libloaderapi::*,
     errhandlingapi::*,
     fileapi::*,
-    winnt::HANDLE,
+    wingdi::*,
 };
 #[cfg(windows)]
 use winapi::shared::{
     minwindef::*,
-    windef::HWND,
-    ntdef::NULL,
+    windef::*,
+    ntdef::*,
     winerror::ERROR_PIPE_CONNECTED,
 };
 #[cfg(windows)]

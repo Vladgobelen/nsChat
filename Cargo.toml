@@ -6,4 +6,4 @@ edition = "2021"
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-winapi = { version = "0.3.9", features = ["winuser", "wingdi", "winbase", "namedpipeapi", "minwinbase", "handleapi", "synchapi", "processthreadsapi", "libloaderapi", "errhandlingapi", "fileapi", "winnt"] }
+winapi = { version = "0.3.9", features = ["winuser", "winbase", "namedpipeapi", "handleapi", "synchapi", "processthreadsapi", "libloaderapi", "errhandlingapi", "fileapi", "winnt", "winerror", "minwindef", "windef", "ntdef"] }
