@@ -1,16 +1,26 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
 #[cfg(windows)]
-use windows::{
-    core::*,
-    Win32::Foundation::*,
-    Win32::System::Pipes::*,
-    Win32::System::Threading::*,
-    Win32::System::LibraryLoader::GetModuleHandleW,
-    Win32::UI::Controls::*,
-    Win32::UI::WindowsAndMessaging::*,
-};
+extern crate winapi;
 
+#[cfg(windows)]
+use winapi::um::{
+    winuser::*,
+    wingdi::*,
+    winbase::*,
+    namedpipeapi::*,
+    handleapi::*,
+    synchapi::*,
+    processthreadsapi::*,
+    libloaderapi::*,
+    errhandlingapi::*,
+    fileapi::*,
+    winnt::*,
+};
+#[cfg(windows)]
+use std::ffi::OsStr;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use std::io::Write;
 #[cfg(windows)]
@@ -50,185 +60,198 @@ fn main() {
 }
 
 #[cfg(windows)]
-fn main() -> Result<()> {
+fn main() {
     println!("Chat Overlay starting...");
     
     let pipe_thread = thread::spawn(|| {
         pipe_server_thread();
     });
     
-    create_window()?;
+    create_window();
     pipe_thread.join().unwrap();
-    
-    Ok(())
 }
 
 #[cfg(windows)]
-fn create_window() -> Result<()> {
+fn create_window() {
     unsafe {
-        let hinstance = GetModuleHandleW(None)?;
+        let hinstance = GetModuleHandleW(std::ptr::null());
+        
+        let class_name: Vec<u16> = OsStr::new(WINDOW_CLASS_NAME)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         
         let wc = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(wndproc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
             hInstance: hinstance,
-            lpszClassName: HSTRING::from(WINDOW_CLASS_NAME).as_wide(),
-            ..Default::default()
+            hIcon: std::ptr::null_mut(),
+            hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
+            hbrBackground: (COLOR_WINDOW + 1) as HBRUSH,
+            lpszMenuName: std::ptr::null(),
+            lpszClassName: class_name.as_ptr(),
         };
         
-        if RegisterClassW(&wc) == 0 {
-            return Err(Error::from_win32());
-        }
+        RegisterClassW(&wc);
+        
+        let title: Vec<u16> = OsStr::new("Chat Overlay")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
-            HSTRING::from(WINDOW_CLASS_NAME).as_wide(),
-            HSTRING::from("Chat Overlay").as_wide(),
+            class_name.as_ptr(),
+            title.as_ptr(),
             WS_POPUP | WS_VISIBLE | WS_THICKFRAME,
             100, 100, 400, 500,
-            None,
-            None,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
             hinstance,
-            None,
+            std::ptr::null_mut(),
         );
         
-        if hwnd.0 == 0 {
-            return Err(Error::from_win32());
-        }
-        
         SetLayeredWindowAttributes(hwnd, 0, 240, LWA_ALPHA);
-        create_controls(hwnd)?;
+        create_controls(hwnd);
         ShowWindow(hwnd, SW_SHOW);
         UpdateWindow(hwnd);
         
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).into() {
+        while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
-        
-        Ok(())
     }
 }
 
 #[cfg(windows)]
-fn create_controls(parent: HWND) -> Result<()> {
+fn create_controls(parent: HWND) {
     unsafe {
-        let hinstance = GetModuleHandleW(None)?;
+        let hinstance = GetModuleHandleW(std::ptr::null());
+        
+        // ListBox
+        let list_class: Vec<u16> = OsStr::new("LISTBOX")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         
         let list_hwnd = CreateWindowExW(
             WS_EX_CLIENTEDGE,
-            HSTRING::from("LISTBOX").as_wide(),
-            HSTRING::from("").as_wide(),
+            list_class.as_ptr(),
+            std::ptr::null(),
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
             10, 10, 380, 380,
             parent,
-            None,
+            std::ptr::null_mut(),
             hinstance,
-            None,
+            std::ptr::null_mut(),
         );
         
-        if list_hwnd.0 == 0 {
-            return Err(Error::from_win32());
-        }
         *MESSAGES_LIST.lock().unwrap() = Some(list_hwnd);
+        
+        // Edit
+        let edit_class: Vec<u16> = OsStr::new("EDIT")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         
         let input_hwnd = CreateWindowExW(
             WS_EX_CLIENTEDGE,
-            HSTRING::from("EDIT").as_wide(),
-            HSTRING::from("").as_wide(),
+            edit_class.as_ptr(),
+            std::ptr::null(),
             WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
             10, 400, 300, 25,
             parent,
-            None,
+            std::ptr::null_mut(),
             hinstance,
-            None,
+            std::ptr::null_mut(),
         );
         
-        if input_hwnd.0 == 0 {
-            return Err(Error::from_win32());
-        }
         *INPUT_FIELD.lock().unwrap() = Some(input_hwnd);
         
-        let button_hwnd = CreateWindowExW(
+        // Button
+        let button_class: Vec<u16> = OsStr::new("BUTTON")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        
+        let button_text: Vec<u16> = OsStr::new("Send")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        
+        CreateWindowExW(
             0,
-            HSTRING::from("BUTTON").as_wide(),
-            HSTRING::from("Send").as_wide(),
+            button_class.as_ptr(),
+            button_text.as_ptr(),
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             320, 400, 70, 25,
             parent,
-            None,
+            1 as HMENU,
             hinstance,
-            None,
+            std::ptr::null_mut(),
         );
-        
-        if button_hwnd.0 == 0 {
-            return Err(Error::from_win32());
-        }
-        
-        Ok(())
     }
 }
 
 #[cfg(windows)]
-extern "system" fn wndproc(
+unsafe extern "system" fn wndproc(
     hwnd: HWND,
-    msg: u32,
+    msg: UINT,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    unsafe {
-        match msg {
-            WM_CREATE => {
-                EnableWindow(hwnd, BOOL::from(true));
-                LRESULT(0)
-            }
-            
-            WM_NCHITTEST => {
-                let result = DefWindowProcW(hwnd, msg, wparam, lparam);
-                if result.0 == HTCLIENT as isize {
-                    LRESULT(HTCAPTION as isize)
-                } else {
-                    result
-                }
-            }
-            
-            WM_COMMAND => {
-                let notification = HIWORD(wparam.0 as u32);
-                if notification == BN_CLICKED as u16 {
-                    send_input_to_pipe();
-                }
-                LRESULT(0)
-            }
-            
-            WM_KEYDOWN => {
-                if wparam.0 == 13 {
-                    let input_hwnd = INPUT_FIELD.lock().unwrap().unwrap();
-                    if GetFocus() == input_hwnd {
-                        send_input_to_pipe();
-                        return LRESULT(0);
-                    }
-                }
-                DefWindowProcW(hwnd, msg, wparam, lparam)
-            }
-            
-            WM_USER_ADD_MESSAGE => {
-                let text_ptr = lparam.0 as *const u16;
-                let text = String::from_utf16_lossy(std::slice::from_raw_parts(
-                    text_ptr,
-                    wparam.0 as usize,
-                ));
-                add_message_to_list(&text);
-                LRESULT(0)
-            }
-            
-            WM_DESTROY => {
-                PostQuitMessage(0);
-                LRESULT(0)
-            }
-            
-            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    match msg {
+        WM_CREATE => {
+            LRESULT(0)
         }
+        
+        WM_NCHITTEST => {
+            let result = DefWindowProcW(hwnd, msg, wparam, lparam);
+            if result == HTCLIENT as LRESULT {
+                return HTCAPTION as LRESULT;
+            }
+            result
+        }
+        
+        WM_COMMAND => {
+            let code = HIWORD(wparam as u32);
+            let id = LOWORD(wparam as u32) as i32;
+            
+            if id == 1 && code == BN_CLICKED {
+                send_input_to_pipe();
+            }
+            LRESULT(0)
+        }
+        
+        WM_KEYDOWN => {
+            if wparam == 13 {
+                let input_hwnd = INPUT_FIELD.lock().unwrap().unwrap();
+                if GetFocus() == input_hwnd {
+                    send_input_to_pipe();
+                    return LRESULT(0);
+                }
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        
+        WM_USER_ADD_MESSAGE => {
+            let text = String::from_utf16_lossy(std::slice::from_raw_parts(
+                lparam as *const u16,
+                wparam as usize,
+            ));
+            add_message_to_list(&text);
+            LRESULT(0)
+        }
+        
+        WM_DESTROY => {
+            PostQuitMessage(0);
+            LRESULT(0)
+        }
+        
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
 
@@ -237,11 +260,11 @@ fn send_input_to_pipe() {
     unsafe {
         let input_hwnd = INPUT_FIELD.lock().unwrap().unwrap();
         let mut buffer = vec![0u16; 1024];
-        let len = GetWindowTextW(input_hwnd, &mut buffer);
+        let len = GetWindowTextW(input_hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
         
         if len > 0 {
             let text = String::from_utf16_lossy(&buffer[..len as usize]);
-            SetWindowTextW(input_hwnd, HSTRING::from("").as_wide());
+            SetWindowTextW(input_hwnd, std::ptr::null());
             
             let msg = PipeMessage::Input { text };
             if let Ok(json) = serde_json::to_string(&msg) {
@@ -256,10 +279,10 @@ fn add_message_to_list(text: &str) {
     unsafe {
         if let Some(list_hwnd) = *MESSAGES_LIST.lock().unwrap() {
             let wide_text: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-            SendMessageW(list_hwnd, LB_ADDSTRING, WPARAM(0), LPARAM(wide_text.as_ptr() as isize));
+            SendMessageW(list_hwnd, LB_ADDSTRING, 0, wide_text.as_ptr() as LPARAM);
             
-            let count = SendMessageW(list_hwnd, LB_GETCOUNT, WPARAM(0), LPARAM(0));
-            SendMessageW(list_hwnd, LB_SETTOPINDEX, WPARAM(count.0 as usize - 1), LPARAM(0));
+            let count = SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0);
+            SendMessageW(list_hwnd, LB_SETTOPINDEX, count - 1, 0);
         }
     }
 }
@@ -268,25 +291,30 @@ fn add_message_to_list(text: &str) {
 fn pipe_server_thread() {
     loop {
         unsafe {
+            let pipe_name: Vec<u16> = OsStr::new(PIPE_NAME)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            
             let pipe_handle = CreateNamedPipeW(
-                HSTRING::from(PIPE_NAME).as_wide(),
+                pipe_name.as_ptr(),
                 PIPE_ACCESS_DUPLEX,
                 PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
                 1,
                 4096,
                 4096,
                 0,
-                None,
+                std::ptr::null_mut(),
             );
             
-            if pipe_handle.is_invalid() {
+            if pipe_handle == INVALID_HANDLE_VALUE {
                 thread::sleep(std::time::Duration::from_secs(1));
                 continue;
             }
             
             *PIPE_HANDLE.lock().unwrap() = Some(pipe_handle);
             
-            let connected = ConnectNamedPipe(pipe_handle, None).as_bool();
+            let connected = ConnectNamedPipe(pipe_handle, std::ptr::null_mut()) != 0;
             if !connected && GetLastError() != ERROR_PIPE_CONNECTED {
                 CloseHandle(pipe_handle);
                 continue;
@@ -298,12 +326,13 @@ fn pipe_server_thread() {
             loop {
                 let result = ReadFile(
                     pipe_handle,
-                    Some(buffer.as_mut_slice()),
-                    Some(&mut bytes_read),
-                    None,
+                    buffer.as_mut_ptr() as *mut _,
+                    buffer.len() as u32,
+                    &mut bytes_read,
+                    std::ptr::null_mut(),
                 );
                 
-                if result.is_ok() && bytes_read > 0 {
+                if result != 0 && bytes_read > 0 {
                     if let Ok(json_str) = std::str::from_utf8(&buffer[..bytes_read as usize]) {
                         if let Ok(PipeMessage::Message { text }) = serde_json::from_str(json_str) {
                             let wide_text: Vec<u16> = text.encode_utf16().collect();
@@ -311,8 +340,8 @@ fn pipe_server_thread() {
                                 PostMessageW(
                                     hwnd,
                                     WM_USER_ADD_MESSAGE,
-                                    WPARAM(wide_text.len()),
-                                    LPARAM(wide_text.as_ptr() as isize),
+                                    wide_text.len() as WPARAM,
+                                    wide_text.as_ptr() as LPARAM,
                                 );
                             }
                         }
@@ -336,12 +365,14 @@ fn send_to_pipe(data: &str) {
             let bytes = data.as_bytes();
             let mut bytes_written = 0u32;
             
-            let _ = WriteFile(
+            WriteFile(
                 pipe,
-                Some(bytes),
-                Some(&mut bytes_written),
-                None,
+                bytes.as_ptr() as *const _,
+                bytes.len() as u32,
+                &mut bytes_written,
+                std::ptr::null_mut(),
             );
+            
             FlushFileBuffers(pipe);
         }
     }
@@ -350,7 +381,26 @@ fn send_to_pipe(data: &str) {
 #[cfg(windows)]
 fn find_overlay_window() -> Option<HWND> {
     unsafe {
-        let hwnd = FindWindowW(HSTRING::from(WINDOW_CLASS_NAME).as_wide(), None);
-        if hwnd.0 != 0 { Some(hwnd) } else { None }
+        let class_name: Vec<u16> = OsStr::new(WINDOW_CLASS_NAME)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        
+        let hwnd = FindWindowW(class_name.as_ptr(), std::ptr::null());
+        if hwnd != std::ptr::null_mut() {
+            Some(hwnd)
+        } else {
+            None
+        }
     }
+}
+
+#[cfg(windows)]
+fn LOWORD(l: u32) -> u16 {
+    (l & 0xFFFF) as u16
+}
+
+#[cfg(windows)]
+fn HIWORD(l: u32) -> u16 {
+    ((l >> 16) & 0xFFFF) as u16
 }
