@@ -1,9 +1,5 @@
 #![cfg_attr(not(windows), allow(dead_code))]
-#[cfg(windows)]
-use winapi::um::wingdi::{
-    CreateFontW, FW_NORMAL, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-    CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, FF_DONTCARE,
-};
+
 #[cfg(windows)]
 extern crate winapi;
 
@@ -70,7 +66,9 @@ enum PipeMessage {
 }
 
 #[cfg(not(windows))]
-fn main() {}
+fn main() {
+    println!("This application only runs on Windows.");
+}
 
 #[cfg(windows)]
 fn main() {
@@ -104,12 +102,11 @@ fn create_window() {
         
         RegisterClassW(&wc);
         
-        let title: Vec<u16> = OsStr::new("Chat")
+        let title: Vec<u16> = OsStr::new("Chat Overlay")
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
         
-        // Стиль: без рамки, поверх всех, видимый
         let style = WS_POPUP | WS_VISIBLE | WS_BORDER;
         let ex_style = WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
         
@@ -118,7 +115,7 @@ fn create_window() {
             class_name.as_ptr(),
             title.as_ptr(),
             style,
-            100, 100, 350, 250,
+            100, 100, 360, 260,
             null_mut(),
             null_mut(),
             hinstance,
@@ -127,9 +124,7 @@ fn create_window() {
         
         *WINDOW_HWND.lock().unwrap() = Some(UnsafeSend(hwnd));
         
-        // Полупрозрачность
         SetLayeredWindowAttributes(hwnd, 0, 240, LWA_ALPHA);
-        
         create_controls(hwnd);
         ShowWindow(hwnd, SW_SHOW);
         UpdateWindow(hwnd);
@@ -147,33 +142,18 @@ fn create_controls(parent: HWND) {
     unsafe {
         let hinstance = GetModuleHandleW(null_mut());
         
-        // Создаем шрифт для контролов
-        let font = CreateFontW(
-            16, 0, 0, 0, 
-            FW_NORMAL, 0, 0, 0,
-            DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS,
-            DEFAULT_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE,
-            null_mut()
-        );
-        
-        // Список сообщений (ListBox)
+        // Список сообщений
         let list_hwnd = CreateWindowExW(
-            0,
+            WS_EX_CLIENTEDGE,
             "LISTBOX\0".as_ptr() as *const u16,
             null_mut(),
-            WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER | LBS_NOINTEGRALHEIGHT,
-            5, 5, 340, 180,
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER,
+            10, 10, 340, 190,
             parent,
             null_mut(),
             hinstance,
             null_mut(),
         );
-        
-        // Применяем шрифт
-        SendMessageW(list_hwnd, WM_SETFONT, font as WPARAM, 1);
         *MESSAGES_LIST.lock().unwrap() = Some(UnsafeSend(list_hwnd));
         
         // Поле ввода
@@ -181,23 +161,17 @@ fn create_controls(parent: HWND) {
             WS_EX_CLIENTEDGE,
             "EDIT\0".as_ptr() as *const u16,
             null_mut(),
-            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | WS_BORDER,
-            5, 190, 340, 22,
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | WS_BORDER | ES_WANTRETURN,
+            10, 210, 340, 22,
             parent,
             null_mut(),
             hinstance,
             null_mut(),
         );
-        
-        // Применяем шрифт
-        SendMessageW(input_hwnd, WM_SETFONT, font as WPARAM, 1);
         *INPUT_FIELD.lock().unwrap() = Some(UnsafeSend(input_hwnd));
         
-        // Устанавливаем фокус на поле ввода
         SetFocus(input_hwnd);
-        
-        // Добавляем тестовое сообщение
-        add_message_to_list("Chat ready...");
+        add_message_to_list("Overlay ready");
     }
 }
 
@@ -214,17 +188,24 @@ unsafe extern "system" fn wndproc(
         WM_NCHITTEST => {
             let result = DefWindowProcW(hwnd, msg, wparam, lparam);
             if result == HTCLIENT as LRESULT {
-                return HTCAPTION as LRESULT; // Можно перетаскивать за любую область
+                return HTCAPTION as LRESULT;
             }
             result
         }
+
+        WM_CTLCOLORLISTBOX => {
+            let dc = wparam as HDC;
+            SetBkMode(dc, TRANSPARENT as i32);
+            SetTextColor(dc, RGB(0, 0, 0));
+            return GetStockObject(WHITE_BRUSH as i32) as LRESULT;
+        }
         
         WM_KEYDOWN => {
-            if wparam as i32 == 13 { // Enter
+            if wparam as i32 == 13 {
                 send_input_to_pipe();
                 return 0;
             }
-            if wparam as i32 == 27 { // Escape
+            if wparam as i32 == 27 {
                 ShowWindow(hwnd, SW_HIDE);
                 return 0;
             }
@@ -258,14 +239,10 @@ fn send_input_to_pipe() {
             
             if len > 0 {
                 let text = String::from_utf16_lossy(&buffer[..len as usize]);
-                
-                // Очищаем поле
                 SetWindowTextW(input_hwnd, null_mut());
                 
-                // Добавляем в свой список
                 add_message_to_list(&format!("> {}", text));
                 
-                // Отправляем в пайп
                 let msg = PipeMessage::Input { text };
                 if let Ok(json) = serde_json::to_string(&msg) {
                     send_to_pipe(&json);
@@ -282,9 +259,10 @@ fn add_message_to_list(text: &str) {
             let wide_text: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
             SendMessageW(list_hwnd, LB_ADDSTRING, 0, wide_text.as_ptr() as LPARAM);
             
-            // Автоскролл
             let count = SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0);
-            SendMessageW(list_hwnd, LB_SETTOPINDEX, (count - 1) as WPARAM, 0);
+            if count > 0 {
+                SendMessageW(list_hwnd, LB_SETTOPINDEX, (count - 1) as WPARAM, 0);
+            }
         }
     }
 }
@@ -339,13 +317,11 @@ fn pipe_server_thread() {
                         if let Ok(PipeMessage::Message { text }) = serde_json::from_str(json_str) {
                             let wide_text: Vec<u16> = text.encode_utf16().collect();
                             
-                            // Показываем окно если скрыто
                             if let Some(UnsafeSend(hwnd)) = *WINDOW_HWND.lock().unwrap() {
                                 ShowWindow(hwnd, SW_SHOW);
                                 SetForegroundWindow(hwnd);
                             }
                             
-                            // Отправляем сообщение в UI
                             if let Some(hwnd) = find_overlay_window() {
                                 PostMessageW(
                                     hwnd,
@@ -399,4 +375,9 @@ fn find_overlay_window() -> Option<HWND> {
         let hwnd = FindWindowW(class_name.as_ptr(), null_mut());
         if hwnd != null_mut() { Some(hwnd) } else { None }
     }
+}
+
+#[cfg(windows)]
+fn RGB(r: u8, g: u8, b: u8) -> COLORREF {
+    (r as COLORREF) | ((g as COLORREF) << 8) | ((b as COLORREF) << 16)
 }
