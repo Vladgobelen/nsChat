@@ -140,7 +140,7 @@ fn create_controls(parent: HWND) {
     unsafe {
         let hinstance = GetModuleHandleW(null_mut());
 
-        // Корректное преобразование имён классов и текста в UTF-16 (широкие строки)
+        // Корректное преобразование имён классов и текста в UTF-16
         let listbox_class: Vec<u16> = OsStr::new("LISTBOX").encode_wide().chain(std::iter::once(0)).collect();
         let edit_class: Vec<u16> = OsStr::new("EDIT").encode_wide().chain(std::iter::once(0)).collect();
         let button_class: Vec<u16> = OsStr::new("BUTTON").encode_wide().chain(std::iter::once(0)).collect();
@@ -202,12 +202,12 @@ fn create_controls(parent: HWND) {
             return;
         }
 
-        // Применяем системный шрифт по умолчанию для корректного отображения на Windows 10/11
+        // Применяем системный шрифт (исправлено: cast isize -> usize)
         let default_font = SendMessageW(parent, WM_GETFONT, 0, 0);
         if default_font != 0 {
-            SendMessageW(list_hwnd, WM_SETFONT, default_font, 0);
-            SendMessageW(input_hwnd, WM_SETFONT, default_font, 0);
-            SendMessageW(btn_hwnd, WM_SETFONT, default_font, 0);
+            SendMessageW(list_hwnd, WM_SETFONT, default_font as usize, 0);
+            SendMessageW(input_hwnd, WM_SETFONT, default_font as usize, 0);
+            SendMessageW(btn_hwnd, WM_SETFONT, default_font as usize, 0);
         }
     }
 }
