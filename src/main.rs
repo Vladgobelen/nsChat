@@ -1,5 +1,9 @@
 #![cfg_attr(not(windows), allow(dead_code))]
-
+#[cfg(windows)]
+use winapi::um::wingdi::{
+    CreateFontW, FW_NORMAL, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+    CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, FF_DONTCARE,
+};
 #[cfg(windows)]
 extern crate winapi;
 
@@ -143,21 +147,33 @@ fn create_controls(parent: HWND) {
     unsafe {
         let hinstance = GetModuleHandleW(null_mut());
         
-        // Список сообщений (ListBox) - 5 строк
+        // Создаем шрифт для контролов
+        let font = CreateFontW(
+            16, 0, 0, 0, 
+            FW_NORMAL, 0, 0, 0,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE,
+            null_mut()
+        );
+        
+        // Список сообщений (ListBox)
         let list_hwnd = CreateWindowExW(
             0,
             "LISTBOX\0".as_ptr() as *const u16,
             null_mut(),
-            WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER,
-            5, 5, 340, 200,
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER | LBS_NOINTEGRALHEIGHT,
+            5, 5, 340, 180,
             parent,
             null_mut(),
             hinstance,
             null_mut(),
         );
         
-        // Устанавливаем высоту элемента для примерно 5 строк
-        SendMessageW(list_hwnd, LB_SETITEMHEIGHT, 0, 20);
+        // Применяем шрифт
+        SendMessageW(list_hwnd, WM_SETFONT, font as WPARAM, 1);
         *MESSAGES_LIST.lock().unwrap() = Some(UnsafeSend(list_hwnd));
         
         // Поле ввода
@@ -166,17 +182,22 @@ fn create_controls(parent: HWND) {
             "EDIT\0".as_ptr() as *const u16,
             null_mut(),
             WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | WS_BORDER,
-            5, 210, 340, 20,
+            5, 190, 340, 22,
             parent,
             null_mut(),
             hinstance,
             null_mut(),
         );
         
+        // Применяем шрифт
+        SendMessageW(input_hwnd, WM_SETFONT, font as WPARAM, 1);
         *INPUT_FIELD.lock().unwrap() = Some(UnsafeSend(input_hwnd));
         
         // Устанавливаем фокус на поле ввода
         SetFocus(input_hwnd);
+        
+        // Добавляем тестовое сообщение
+        add_message_to_list("Chat ready...");
     }
 }
 
@@ -199,13 +220,11 @@ unsafe extern "system" fn wndproc(
         }
         
         WM_KEYDOWN => {
-            // Enter - отправка
-            if wparam as i32 == 13 {
+            if wparam as i32 == 13 { // Enter
                 send_input_to_pipe();
                 return 0;
             }
-            // Escape - скрыть окно
-            if wparam as i32 == 27 {
+            if wparam as i32 == 27 { // Escape
                 ShowWindow(hwnd, SW_HIDE);
                 return 0;
             }
