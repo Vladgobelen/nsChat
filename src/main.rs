@@ -35,7 +35,7 @@ use std::ptr::null_mut;
 use serde::{Deserialize, Serialize};
 
 #[cfg(windows)]
-const WINDOW_CLASS_NAME: &str = "NSQCuE_Overlay_Window";
+const WINDOW_CLASS_NAME: &str = "NSQCuE_Overlay";
 #[cfg(windows)]
 const PIPE_NAME: &str = r"\\.\pipe\NSQCuE_Overlay_Pipe";
 #[cfg(windows)]
@@ -52,6 +52,8 @@ static MESSAGES_LIST: Mutex<Option<UnsafeSend<HWND>>> = Mutex::new(None);
 static INPUT_FIELD: Mutex<Option<UnsafeSend<HWND>>> = Mutex::new(None);
 #[cfg(windows)]
 static PIPE_HANDLE: Mutex<Option<UnsafeSend<HANDLE>>> = Mutex::new(None);
+#[cfg(windows)]
+static WINDOW_HWND: Mutex<Option<UnsafeSend<HWND>>> = Mutex::new(None);
 
 #[cfg(windows)]
 #[derive(Debug, Serialize, Deserialize)]
@@ -64,18 +66,11 @@ enum PipeMessage {
 }
 
 #[cfg(not(windows))]
-fn main() {
-    println!("This application only runs on Windows.");
-}
+fn main() {}
 
 #[cfg(windows)]
 fn main() {
-    println!("Chat Overlay starting...");
-    
-    let pipe_thread = thread::spawn(|| {
-        pipe_server_thread();
-    });
-    
+    let pipe_thread = thread::spawn(|| pipe_server_thread());
     create_window();
     pipe_thread.join().unwrap();
 }
@@ -105,24 +100,32 @@ fn create_window() {
         
         RegisterClassW(&wc);
         
-        let title: Vec<u16> = OsStr::new("Chat Overlay")
+        let title: Vec<u16> = OsStr::new("Chat")
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
         
+        // Стиль: без рамки, поверх всех, видимый
+        let style = WS_POPUP | WS_VISIBLE | WS_BORDER;
+        let ex_style = WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+        
         let hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+            ex_style,
             class_name.as_ptr(),
             title.as_ptr(),
-            WS_POPUP | WS_VISIBLE | WS_THICKFRAME,
-            100, 100, 400, 500,
+            style,
+            100, 100, 350, 250,
             null_mut(),
             null_mut(),
             hinstance,
             null_mut(),
         );
         
+        *WINDOW_HWND.lock().unwrap() = Some(UnsafeSend(hwnd));
+        
+        // Полупрозрачность
         SetLayeredWindowAttributes(hwnd, 0, 240, LWA_ALPHA);
+        
         create_controls(hwnd);
         ShowWindow(hwnd, SW_SHOW);
         UpdateWindow(hwnd);
@@ -139,76 +142,41 @@ fn create_window() {
 fn create_controls(parent: HWND) {
     unsafe {
         let hinstance = GetModuleHandleW(null_mut());
-
-        // Корректное преобразование имён классов и текста в UTF-16
-        let listbox_class: Vec<u16> = OsStr::new("LISTBOX").encode_wide().chain(std::iter::once(0)).collect();
-        let edit_class: Vec<u16> = OsStr::new("EDIT").encode_wide().chain(std::iter::once(0)).collect();
-        let button_class: Vec<u16> = OsStr::new("BUTTON").encode_wide().chain(std::iter::once(0)).collect();
-        let send_text: Vec<u16> = OsStr::new("Send").encode_wide().chain(std::iter::once(0)).collect();
-
-        // Создаём ListBox
+        
+        // Список сообщений (ListBox) - 5 строк
         let list_hwnd = CreateWindowExW(
-            WS_EX_CLIENTEDGE,
-            listbox_class.as_ptr(),
+            0,
+            "LISTBOX\0".as_ptr() as *const u16,
             null_mut(),
-            WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
-            10, 10, 380, 380,
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER,
+            5, 5, 340, 200,
             parent,
             null_mut(),
             hinstance,
             null_mut(),
         );
-
-        if list_hwnd.is_null() {
-            eprintln!("Ошибка: не удалось создать ListBox");
-            return;
-        }
+        
+        // Устанавливаем высоту элемента для примерно 5 строк
+        SendMessageW(list_hwnd, LB_SETITEMHEIGHT, 0, 20);
         *MESSAGES_LIST.lock().unwrap() = Some(UnsafeSend(list_hwnd));
-
-        // Создаём Edit (поле ввода)
+        
+        // Поле ввода
         let input_hwnd = CreateWindowExW(
             WS_EX_CLIENTEDGE,
-            edit_class.as_ptr(),
+            "EDIT\0".as_ptr() as *const u16,
             null_mut(),
-            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-            10, 400, 300, 25,
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | WS_BORDER,
+            5, 210, 340, 20,
             parent,
             null_mut(),
             hinstance,
             null_mut(),
         );
-
-        if input_hwnd.is_null() {
-            eprintln!("Ошибка: не удалось создать Edit");
-            return;
-        }
+        
         *INPUT_FIELD.lock().unwrap() = Some(UnsafeSend(input_hwnd));
-
-        // Создаём Button
-        let btn_hwnd = CreateWindowExW(
-            0,
-            button_class.as_ptr(),
-            send_text.as_ptr(),
-            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            320, 400, 70, 25,
-            parent,
-            1 as HMENU,
-            hinstance,
-            null_mut(),
-        );
-
-        if btn_hwnd.is_null() {
-            eprintln!("Ошибка: не удалось создать Button");
-            return;
-        }
-
-        // Применяем системный шрифт (исправлено: cast isize -> usize)
-        let default_font = SendMessageW(parent, WM_GETFONT, 0, 0);
-        if default_font != 0 {
-            SendMessageW(list_hwnd, WM_SETFONT, default_font as usize, 0);
-            SendMessageW(input_hwnd, WM_SETFONT, default_font as usize, 0);
-            SendMessageW(btn_hwnd, WM_SETFONT, default_font as usize, 0);
-        }
+        
+        // Устанавливаем фокус на поле ввода
+        SetFocus(input_hwnd);
     }
 }
 
@@ -225,29 +193,21 @@ unsafe extern "system" fn wndproc(
         WM_NCHITTEST => {
             let result = DefWindowProcW(hwnd, msg, wparam, lparam);
             if result == HTCLIENT as LRESULT {
-                return HTCAPTION as LRESULT;
+                return HTCAPTION as LRESULT; // Можно перетаскивать за любую область
             }
             result
         }
         
-        WM_COMMAND => {
-            let code = HIWORD(wparam as u32);
-            let id = LOWORD(wparam as u32) as i32;
-            
-            if id == 1 && code == BN_CLICKED {
-                send_input_to_pipe();
-            }
-            0
-        }
-        
         WM_KEYDOWN => {
+            // Enter - отправка
             if wparam as i32 == 13 {
-                if let Some(UnsafeSend(input_hwnd)) = *INPUT_FIELD.lock().unwrap() {
-                    if GetFocus() == input_hwnd {
-                        send_input_to_pipe();
-                        return 0;
-                    }
-                }
+                send_input_to_pipe();
+                return 0;
+            }
+            // Escape - скрыть окно
+            if wparam as i32 == 27 {
+                ShowWindow(hwnd, SW_HIDE);
+                return 0;
             }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
@@ -279,8 +239,14 @@ fn send_input_to_pipe() {
             
             if len > 0 {
                 let text = String::from_utf16_lossy(&buffer[..len as usize]);
+                
+                // Очищаем поле
                 SetWindowTextW(input_hwnd, null_mut());
                 
+                // Добавляем в свой список
+                add_message_to_list(&format!("> {}", text));
+                
+                // Отправляем в пайп
                 let msg = PipeMessage::Input { text };
                 if let Ok(json) = serde_json::to_string(&msg) {
                     send_to_pipe(&json);
@@ -297,6 +263,7 @@ fn add_message_to_list(text: &str) {
             let wide_text: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
             SendMessageW(list_hwnd, LB_ADDSTRING, 0, wide_text.as_ptr() as LPARAM);
             
+            // Автоскролл
             let count = SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0);
             SendMessageW(list_hwnd, LB_SETTOPINDEX, (count - 1) as WPARAM, 0);
         }
@@ -352,6 +319,14 @@ fn pipe_server_thread() {
                     if let Ok(json_str) = std::str::from_utf8(&buffer[..bytes_read as usize]) {
                         if let Ok(PipeMessage::Message { text }) = serde_json::from_str(json_str) {
                             let wide_text: Vec<u16> = text.encode_utf16().collect();
+                            
+                            // Показываем окно если скрыто
+                            if let Some(UnsafeSend(hwnd)) = *WINDOW_HWND.lock().unwrap() {
+                                ShowWindow(hwnd, SW_SHOW);
+                                SetForegroundWindow(hwnd);
+                            }
+                            
+                            // Отправляем сообщение в UI
                             if let Some(hwnd) = find_overlay_window() {
                                 PostMessageW(
                                     hwnd,
@@ -403,20 +378,6 @@ fn find_overlay_window() -> Option<HWND> {
             .collect();
         
         let hwnd = FindWindowW(class_name.as_ptr(), null_mut());
-        if hwnd != null_mut() {
-            Some(hwnd)
-        } else {
-            None
-        }
+        if hwnd != null_mut() { Some(hwnd) } else { None }
     }
-}
-
-#[cfg(windows)]
-fn LOWORD(l: u32) -> u16 {
-    (l & 0xFFFF) as u16
-}
-
-#[cfg(windows)]
-fn HIWORD(l: u32) -> u16 {
-    ((l >> 16) & 0xFFFF) as u16
 }
