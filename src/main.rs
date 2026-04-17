@@ -139,10 +139,17 @@ fn create_window() {
 fn create_controls(parent: HWND) {
     unsafe {
         let hinstance = GetModuleHandleW(null_mut());
-        
+
+        // Корректное преобразование имён классов и текста в UTF-16 (широкие строки)
+        let listbox_class: Vec<u16> = OsStr::new("LISTBOX").encode_wide().chain(std::iter::once(0)).collect();
+        let edit_class: Vec<u16> = OsStr::new("EDIT").encode_wide().chain(std::iter::once(0)).collect();
+        let button_class: Vec<u16> = OsStr::new("BUTTON").encode_wide().chain(std::iter::once(0)).collect();
+        let send_text: Vec<u16> = OsStr::new("Send").encode_wide().chain(std::iter::once(0)).collect();
+
+        // Создаём ListBox
         let list_hwnd = CreateWindowExW(
             WS_EX_CLIENTEDGE,
-            "LISTBOX\0".as_ptr() as *const u16,
+            listbox_class.as_ptr(),
             null_mut(),
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
             10, 10, 380, 380,
@@ -151,12 +158,17 @@ fn create_controls(parent: HWND) {
             hinstance,
             null_mut(),
         );
-        
+
+        if list_hwnd.is_null() {
+            eprintln!("Ошибка: не удалось создать ListBox");
+            return;
+        }
         *MESSAGES_LIST.lock().unwrap() = Some(UnsafeSend(list_hwnd));
-        
+
+        // Создаём Edit (поле ввода)
         let input_hwnd = CreateWindowExW(
             WS_EX_CLIENTEDGE,
-            "EDIT\0".as_ptr() as *const u16,
+            edit_class.as_ptr(),
             null_mut(),
             WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
             10, 400, 300, 25,
@@ -165,13 +177,18 @@ fn create_controls(parent: HWND) {
             hinstance,
             null_mut(),
         );
-        
+
+        if input_hwnd.is_null() {
+            eprintln!("Ошибка: не удалось создать Edit");
+            return;
+        }
         *INPUT_FIELD.lock().unwrap() = Some(UnsafeSend(input_hwnd));
-        
-        CreateWindowExW(
+
+        // Создаём Button
+        let btn_hwnd = CreateWindowExW(
             0,
-            "BUTTON\0".as_ptr() as *const u16,
-            "Send\0".as_ptr() as *const u16,
+            button_class.as_ptr(),
+            send_text.as_ptr(),
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             320, 400, 70, 25,
             parent,
@@ -179,6 +196,19 @@ fn create_controls(parent: HWND) {
             hinstance,
             null_mut(),
         );
+
+        if btn_hwnd.is_null() {
+            eprintln!("Ошибка: не удалось создать Button");
+            return;
+        }
+
+        // Применяем системный шрифт по умолчанию для корректного отображения на Windows 10/11
+        let default_font = SendMessageW(parent, WM_GETFONT, 0, 0);
+        if default_font != 0 {
+            SendMessageW(list_hwnd, WM_SETFONT, default_font, 0);
+            SendMessageW(input_hwnd, WM_SETFONT, default_font, 0);
+            SendMessageW(btn_hwnd, WM_SETFONT, default_font, 0);
+        }
     }
 }
 
